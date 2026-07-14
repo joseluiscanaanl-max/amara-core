@@ -1,11 +1,33 @@
+# Dependencias
 node_modules/
-.pnpm-store/
-.next/
-dist/
-coverage/
+
+# Variables de entorno
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Compilación
+dist/
+build/
+.next/
+coverage/
+
+# Logs
 *.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# Sistema operativo
 .DS_Store
 Thumbs.db
+
+# VS Code
+.vscode/settings.json
+
+# Archivos temporales
+tmp/
+temp/
+
+# Cachés
+.turbo/
