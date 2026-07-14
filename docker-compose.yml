@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: amara-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-amara}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-amara_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-amara_core}
+    ports:
+      - "5432:5432"
+    volumes:
+      - amara_postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amara} -d ${POSTGRES_DB:-amara_core}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    container_name: amara-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - amara_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  amara_postgres_data:
+  amara_redis_data:
