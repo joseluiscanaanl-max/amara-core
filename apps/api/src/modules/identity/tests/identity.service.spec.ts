@@ -53,6 +53,7 @@ class InMemoryOtpRepository implements OtpChallengeRepository {
     }
 
     record.attempts += 1;
+
     return record.attempts;
   }
 
@@ -71,7 +72,9 @@ class InMemoryOtpRepository implements OtpChallengeRepository {
 class InMemoryUserRepository implements UserRepository {
   readonly users = new Map<string, IdentityUser>();
 
-  async findByPhone(phone: string): Promise<IdentityUser | null> {
+  async findByPhone(
+    phone: string,
+  ): Promise<IdentityUser | null> {
     return this.users.get(phone) ?? null;
   }
 
@@ -79,6 +82,7 @@ class InMemoryUserRepository implements UserRepository {
     input: CreateIdentityUserInput,
   ): Promise<IdentityUser> {
     const now = new Date();
+
     const user: IdentityUser = {
       id: input.id,
       phone: input.phone,
@@ -91,77 +95,125 @@ class InMemoryUserRepository implements UserRepository {
     };
 
     this.users.set(input.phone, user);
+
     return user;
   }
 }
 
+function createSessionServiceMock() {
+  return {
+    createSession: jest.fn().mockResolvedValue({
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      accessTokenExpiresIn: '15m',
+      refreshTokenExpiresIn: '30d',
+      sessionId: 'session-id',
+    }),
+  };
+}
+
 describe('IdentityService', () => {
-  it('creates a user after verifying a registration OTP', async () => {
-    const otpRepository = new InMemoryOtpRepository();
-    const userRepository = new InMemoryUserRepository();
-    const configService = new ConfigService({
-      OTP_PEPPER: 'test-pepper',
-      OTP_DEVELOPMENT_ECHO: 'true',
-    });
+  it(
+    'creates a user and session after verifying a registration OTP',
+    async () => {
+      const otpRepository = new InMemoryOtpRepository();
+      const userRepository = new InMemoryUserRepository();
+      const sessionService = createSessionServiceMock();
 
-    const service = new IdentityService(
-      otpRepository,
-      userRepository,
-      configService,
-    );
+      const configService = new ConfigService({
+        OTP_PEPPER: 'test-pepper',
+        OTP_DEVELOPMENT_ECHO: 'true',
+      });
 
-    const requested = await service.requestOtp({
-      phone: '+528331234567',
-      purpose: 'REGISTRATION',
-    });
+      const service = new IdentityService(
+        otpRepository,
+        userRepository,
+        sessionService as never,
+        configService,
+      );
 
-    const verified = await service.verifyOtp({
-      challengeId: requested.data.challengeId,
-      code: requested.data.developmentCode!,
-    });
+      const requested = await service.requestOtp({
+        phone: '+528331234567',
+        purpose: 'REGISTRATION',
+      });
 
-    expect(verified.data.status).toBe('OTP_VERIFIED');
-    expect(verified.data.user.phone).toBe('+528331234567');
-    expect(userRepository.users.size).toBe(1);
-  });
+      const verified = await service.verifyOtp({
+        challengeId: requested.data.challengeId,
+        code: requested.data.developmentCode!,
+      });
 
-  it('reuses the existing user on a later registration verification', async () => {
-    const otpRepository = new InMemoryOtpRepository();
-    const userRepository = new InMemoryUserRepository();
-    const configService = new ConfigService({
-      OTP_PEPPER: 'test-pepper',
-      OTP_DEVELOPMENT_ECHO: 'true',
-    });
+      expect(verified.data.status).toBe('OTP_VERIFIED');
 
-    const service = new IdentityService(
-      otpRepository,
-      userRepository,
-      configService,
-    );
+      expect(verified.data.user).toEqual(
+        expect.objectContaining({
+          phone: '+528331234567',
+          status: 'ACTIVE',
+        }),
+      );
 
-    const first = await service.requestOtp({
-      phone: '+528331234567',
-      purpose: 'REGISTRATION',
-    });
+      expect(verified.data.session).toEqual({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        accessTokenExpiresIn: '15m',
+        refreshTokenExpiresIn: '30d',
+        sessionId: 'session-id',
+      });
 
-    const firstVerification = await service.verifyOtp({
-      challengeId: first.data.challengeId,
-      code: first.data.developmentCode!,
-    });
+      expect(userRepository.users.size).toBe(1);
 
-    const second = await service.requestOtp({
-      phone: '+528331234567',
-      purpose: 'REGISTRATION',
-    });
+      expect(sessionService.createSession).toHaveBeenCalledWith(
+        verified.data.user.id,
+        '+528331234567',
+      );
+    },
+  );
 
-    const secondVerification = await service.verifyOtp({
-      challengeId: second.data.challengeId,
-      code: second.data.developmentCode!,
-    });
+  it(
+    'reuses the existing user on a later registration verification',
+    async () => {
+      const otpRepository = new InMemoryOtpRepository();
+      const userRepository = new InMemoryUserRepository();
+      const sessionService = createSessionServiceMock();
 
-    expect(secondVerification.data.user.id).toBe(
-      firstVerification.data.user.id,
-    );
-    expect(userRepository.users.size).toBe(1);
-  });
+      const configService = new ConfigService({
+        OTP_PEPPER: 'test-pepper',
+        OTP_DEVELOPMENT_ECHO: 'true',
+      });
+
+      const service = new IdentityService(
+        otpRepository,
+        userRepository,
+        sessionService as never,
+        configService,
+      );
+
+      const firstRequest = await service.requestOtp({
+        phone: '+528331234567',
+        purpose: 'REGISTRATION',
+      });
+
+      const firstVerification = await service.verifyOtp({
+        challengeId: firstRequest.data.challengeId,
+        code: firstRequest.data.developmentCode!,
+      });
+
+      const secondRequest = await service.requestOtp({
+        phone: '+528331234567',
+        purpose: 'REGISTRATION',
+      });
+
+      const secondVerification = await service.verifyOtp({
+        challengeId: secondRequest.data.challengeId,
+        code: secondRequest.data.developmentCode!,
+      });
+
+      expect(secondVerification.data.user.id).toBe(
+        firstVerification.data.user.id,
+      );
+
+      expect(userRepository.users.size).toBe(1);
+
+      expect(sessionService.createSession).toHaveBeenCalledTimes(2);
+    },
+  );
 });

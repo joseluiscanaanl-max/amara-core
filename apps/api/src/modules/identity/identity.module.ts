@@ -5,8 +5,10 @@ import { OTP_CHALLENGE_REPOSITORY } from './domain/repositories/otp-challenge.re
 import { USER_REPOSITORY } from './domain/repositories/user.repository';
 import { PostgresOtpChallengeRepository } from './infrastructure/repositories/postgres-otp-challenge.repository';
 import { PostgresUserRepository } from './infrastructure/repositories/postgres-user.repository';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
+  imports: [AuthModule],
   controllers: [IdentityController],
   providers: [
     IdentityService,

@@ -1,3 +1,4 @@
+import { SessionService } from '../../../auth/application/services/session.service';
 import {
   BadRequestException,
   HttpException,
@@ -38,10 +39,14 @@ export class IdentityService {
 
   constructor(
     @Inject(OTP_CHALLENGE_REPOSITORY)
-    private readonly otpRepository: OtpChallengeRepository,
-    @Inject(USER_REPOSITORY)
-    private readonly userRepository: UserRepository,
-    configService: ConfigService,
+  private readonly otpRepository: OtpChallengeRepository,
+
+  @Inject(USER_REPOSITORY)
+  private readonly userRepository: UserRepository,
+
+  private readonly sessionService: SessionService,
+
+  configService: ConfigService,
   ) {
     this.pepper =
       configService.get<string>('OTP_PEPPER') ??
@@ -138,31 +143,33 @@ export class IdentityService {
     }
 
     const user = await this.resolveUser(
-      challenge.phone,
-      challenge.purpose,
-    );
+  challenge.phone,
+  challenge.purpose,
+);
 
-    const verifiedAt = new Date();
-    await this.otpRepository.markVerified(
-      challenge.id,
-      verifiedAt,
-    );
+const session = await this.sessionService.createSession(
+  user.id,
+  user.phone,
+);
+
+const verifiedAt = new Date();
 
     return {
-      success: true,
-      data: {
-        challengeId: challenge.id,
-        phone: challenge.phone,
-        purpose: challenge.purpose,
-        verifiedAt: verifiedAt.toISOString(),
-        status: 'OTP_VERIFIED',
-        user: {
-          id: user.id,
-          phone: user.phone,
-          status: user.status,
-        },
-      },
-    };
+  success: true,
+  data: {
+    challengeId: challenge.id,
+    phone: challenge.phone,
+    purpose: challenge.purpose,
+    verifiedAt: verifiedAt.toISOString(),
+    status: 'OTP_VERIFIED',
+    user: {
+      id: user.id,
+      phone: user.phone,
+      status: user.status,
+    },
+    session,
+  },
+};
   }
 
   private async resolveUser(
