@@ -1,62 +1,36 @@
 import {
   Injectable,
-  OnApplicationShutdown,
-  OnModuleInit,
+  OnModuleDestroy,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import {
+  Pool,
+  type PoolClient,
+  type QueryResult,
+  type QueryResultRow,
+} from 'pg';
 
 @Injectable()
-export class DatabaseService
-  implements OnModuleInit, OnApplicationShutdown
-{
+export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool;
 
-  constructor(configService: ConfigService) {
-    const connectionString = configService.get<string>('DATABASE_URL');
-
-    if (!connectionString) {
-      throw new Error('DATABASE_URL no está configurada.');
-    }
-
+  constructor() {
     this.pool = new Pool({
-      connectionString,
-      max: 10,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
+      connectionString: process.env.DATABASE_URL,
     });
   }
 
-  async onModuleInit(): Promise<void> {
-    await this.pool.query('SELECT 1');
-  }
-
-  async onApplicationShutdown(): Promise<void> {
-    await this.pool.end();
-  }
-
-  query<T extends QueryResultRow = QueryResultRow>(
+  async query<T extends QueryResultRow>(
     text: string,
-    values: readonly unknown[] = [],
+    params?: unknown[],
   ): Promise<QueryResult<T>> {
-    return this.pool.query<T>(text, [...values]);
+    return this.pool.query<T>(text, params);
   }
 
-  async transaction<T>(
-    operation: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
-    const client = await this.pool.connect();
+  async getClient(): Promise<PoolClient> {
+    return this.pool.connect();
+  }
 
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end();
   }
 }
