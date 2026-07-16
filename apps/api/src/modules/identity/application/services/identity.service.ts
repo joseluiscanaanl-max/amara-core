@@ -7,16 +7,27 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  createHmac,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { RequestOtpDto } from '../../dto/request-otp.dto';
 import { VerifyOtpDto } from '../../dto/verify-otp.dto';
 import {
   OTP_CHALLENGE_REPOSITORY,
 } from '../../domain/repositories/otp-challenge.repository';
-
 import type {
   OtpChallengeRepository,
 } from '../../domain/repositories/otp-challenge.repository';
+import {
+  USER_REPOSITORY,
+} from '../../domain/repositories/user.repository';
+import type {
+  IdentityUser,
+  UserRepository,
+} from '../../domain/repositories/user.repository';
 
 @Injectable()
 export class IdentityService {
@@ -28,18 +39,29 @@ export class IdentityService {
   constructor(
     @Inject(OTP_CHALLENGE_REPOSITORY)
     private readonly otpRepository: OtpChallengeRepository,
+    @Inject(USER_REPOSITORY)
+    private readonly userRepository: UserRepository,
     configService: ConfigService,
   ) {
-    this.pepper = configService.get<string>('OTP_PEPPER') ?? 'development-only-change-me';
-    this.developmentEcho = configService.get<string>('OTP_DEVELOPMENT_ECHO') === 'true';
+    this.pepper =
+      configService.get<string>('OTP_PEPPER') ??
+      'development-only-change-me';
+
+    this.developmentEcho =
+      configService.get<string>('OTP_DEVELOPMENT_ECHO') === 'true';
   }
 
   async requestOtp(dto: RequestOtpDto) {
     const challengeId = randomUUID();
-    const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-    const expiresAt = new Date(Date.now() + this.expiresInSeconds * 1000);
+    const code = randomInt(0, 1_000_000)
+      .toString()
+      .padStart(6, '0');
+    const expiresAt = new Date(
+      Date.now() + this.expiresInSeconds * 1000,
+    );
 
     await this.otpRepository.invalidateActive(dto.phone, dto.purpose);
+
     await this.otpRepository.create({
       id: challengeId,
       phone: dto.phone,
@@ -56,44 +78,75 @@ export class IdentityService {
         phone: dto.phone,
         purpose: dto.purpose,
         expiresInSeconds: this.expiresInSeconds,
-        ...(this.developmentEcho ? { developmentCode: code } : {}),
+        ...(this.developmentEcho
+          ? { developmentCode: code }
+          : {}),
       },
     };
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
-    const challenge = await this.otpRepository.findByIdForUpdate(dto.challengeId);
+    const challenge =
+      await this.otpRepository.findByIdForUpdate(dto.challengeId);
 
     if (!challenge) {
-      throw new BadRequestException('El desafío OTP no existe o fue invalidado.');
+      throw new BadRequestException(
+        'El desafío OTP no existe o fue invalidado.',
+      );
     }
+
     if (challenge.verifiedAt) {
-      throw new BadRequestException('El código OTP ya fue utilizado.');
+      throw new BadRequestException(
+        'El código OTP ya fue utilizado.',
+      );
     }
+
     if (challenge.expiresAt.getTime() <= Date.now()) {
       throw new UnauthorizedException('El código OTP expiró.');
     }
+
     if (challenge.attempts >= challenge.maxAttempts) {
-  throw new HttpException(
-    'Se alcanzó el número máximo de intentos.',
-    HttpStatus.TOO_MANY_REQUESTS,
-  );
-}
+      throw new HttpException(
+        'Se alcanzó el número máximo de intentos.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
 
     const expected = Buffer.from(challenge.secretHash, 'hex');
-    const received = Buffer.from(this.hashCode(challenge.id, dto.code), 'hex');
-    const valid = expected.length === received.length && timingSafeEqual(expected, received);
+    const received = Buffer.from(
+      this.hashCode(challenge.id, dto.code),
+      'hex',
+    );
+
+    const valid =
+      expected.length === received.length &&
+      timingSafeEqual(expected, received);
 
     if (!valid) {
-      const attempts = await this.otpRepository.incrementAttempts(challenge.id);
+      const attempts = await this.otpRepository.incrementAttempts(
+        challenge.id,
+      );
+      const remaining = Math.max(
+        challenge.maxAttempts - attempts,
+        0,
+      );
+
       throw new UnauthorizedException({
         message: 'El código OTP es incorrecto.',
-        remainingAttempts: Math.max(challenge.maxAttempts - attempts, 0),
+        remainingAttempts: remaining,
       });
     }
 
+    const user = await this.resolveUser(
+      challenge.phone,
+      challenge.purpose,
+    );
+
     const verifiedAt = new Date();
-    await this.otpRepository.markVerified(challenge.id, verifiedAt);
+    await this.otpRepository.markVerified(
+      challenge.id,
+      verifiedAt,
+    );
 
     return {
       success: true,
@@ -103,8 +156,36 @@ export class IdentityService {
         purpose: challenge.purpose,
         verifiedAt: verifiedAt.toISOString(),
         status: 'OTP_VERIFIED',
+        user: {
+          id: user.id,
+          phone: user.phone,
+          status: user.status,
+        },
       },
     };
+  }
+
+  private async resolveUser(
+    phone: string,
+    purpose: 'REGISTRATION' | 'LOGIN' | 'RECOVERY',
+  ): Promise<IdentityUser> {
+    const existing = await this.userRepository.findByPhone(phone);
+
+    if (existing) {
+      return existing;
+    }
+
+    if (purpose !== 'REGISTRATION') {
+      throw new UnauthorizedException(
+        'El teléfono todavía no está registrado.',
+      );
+    }
+
+    return this.userRepository.create({
+      id: randomUUID(),
+      phone,
+      status: 'ACTIVE',
+    });
   }
 
   private hashCode(challengeId: string, code: string): string {
