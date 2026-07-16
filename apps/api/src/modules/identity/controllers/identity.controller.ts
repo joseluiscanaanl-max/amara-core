@@ -1,7 +1,7 @@
 import { Body, Controller, Post } from '@nestjs/common';
+import { IdentityService } from '../application/services/identity.service';
 import { RequestOtpDto } from '../dto/request-otp.dto';
 import { VerifyOtpDto } from '../dto/verify-otp.dto';
-import { IdentityService } from '../application/services/identity.service';
 
 @Controller('auth')
 export class IdentityController {

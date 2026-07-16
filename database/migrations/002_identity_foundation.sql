@@ -17,10 +17,15 @@ CREATE TABLE IF NOT EXISTS identity.otp_challenges (
     max_attempts INTEGER NOT NULL DEFAULT 5,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
+    invalidated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_identity_otp_attempts
-        CHECK (attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts)
+      CHECK (attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts)
 );
 
 CREATE INDEX IF NOT EXISTS ix_identity_otp_phone_created
 ON identity.otp_challenges (phone_e164, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ix_identity_otp_active
+ON identity.otp_challenges (phone_e164, purpose_code, expires_at)
+WHERE verified_at IS NULL AND invalidated_at IS NULL;
